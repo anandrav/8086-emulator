@@ -1,11 +1,16 @@
 use std::env;
 use std::fs;
 use std::io::Result;
+use std::slice::Iter;
 
 fn read_file_to_bytes(filename: &str) -> Result<Vec<u8>> {
     fs::read(filename)
 }
 
+const OP_REG_MEM_MASK: u8 = 0b11111100;
+const OP_REG_MEM: u8 = 0b10001000;
+const OP_IMM_REG_MASK: u8 = 0b11110000;
+const OP_IMM_REG: u8 = 0b10110000;
 const D_MASK: u8 = 0b00000010;
 const W_MASK: u8 = 0b00000001;
 const MODE_MASK: u8 = 0b11000000;
@@ -14,29 +19,70 @@ const RM_MASK: u8 = 0b00000111;
 
 fn main() {
     let args: Vec<_> = env::args().collect();
+    if args.len() != 2 {
+        panic!("missing an argument");
+    }
     let filename = &args[1];
     let bytes = read_file_to_bytes(filename).unwrap();
 
     println!("bits 16");
-    for i in 0..bytes.len() / 2 {
-        let b1 = bytes[i * 2];
-        let b2 = bytes[i * 2 + 1];
+    let mut iter = bytes.iter();
+    let mut nbytes = 0;
+    while let Some(b1) = iter.next() {
+        nbytes += 1;
 
-        let d = b1 & D_MASK;
-        let w = b1 & W_MASK;
+        if (b1 & OP_REG_MEM_MASK) == OP_REG_MEM {
+            // println!("-- reg to/from mem --");
+            let b2 = iter.next().unwrap();
+            nbytes += 1;
 
-        let mode = (b2 & MODE_MASK) >> 6;
-        assert_eq!(mode, 0b11);
-        let reg = (b2 & REG_MASK) >> 3;
-        let rm = b2 & RM_MASK;
+            let d = b1 & D_MASK;
+            let w = b1 & W_MASK;
 
-        let mut register1 = register_field_encoding(reg, w);
-        let mut register2 = register_field_encoding(rm, w);
-        if d == 0 {
-            (register1, register2) = (register2, register1);
+            let mode = (b2 & MODE_MASK) >> 6;
+            let reg = (b2 & REG_MASK) >> 3;
+            let rm = b2 & RM_MASK;
+
+            if mode == 3 {
+                // register to register
+                let mut register1 = register_field_encoding(reg, w);
+                let mut register2 = register_field_encoding(rm, w);
+                if d == 0 {
+                    (register1, register2) = (register2, register1);
+                }
+
+                println!("mov {}, {}", register1, register2);
+            } else {
+                // register to/from memory
+                let register = register_field_encoding(reg, w);
+                let addr = effective_address_calculation(rm, mode, &mut iter, &mut nbytes);
+                if d == 0 {
+                    println!("mov {}, {}", addr, register);
+                } else {
+                    println!("mov {}, {}", register, addr);
+                }
+            }
+        } else if (b1 & OP_IMM_REG_MASK) == OP_IMM_REG {
+            // println!("-- imm to reg --");
+
+            let w = (b1 & 0b00001000) >> 3;
+            // println!("w={}", w);
+            let reg = b1 & 0b00000111;
+
+            let b2 = iter.next().unwrap();
+            nbytes += 1;
+
+            let mut data = *b2 as u16;
+            if w != 0 {
+                let hi = *iter.next().unwrap() as u16;
+                data |= hi << 8;
+                nbytes += 1;
+            }
+
+            println!("mov {}, {}", register_field_encoding(reg, w), data);
+        } else {
+            panic!("Unrecognized opcode: {:b}, nbytes={}", b1, nbytes);
         }
-
-        println!("mov {}, {}", register1, register2);
     }
 }
 
@@ -58,6 +104,66 @@ fn register_field_encoding(reg: u8, w: u8) -> &'static str {
         (0b110, 1) => "si",
         (0b111, 0) => "bh",
         (0b111, 1) => "di",
-        _ => panic!("reg={}, w={}", reg, w),
+        _ => panic!("unhandled: reg={}, w={}", reg, w),
     }
+}
+
+// direct address is not handled here
+fn effective_address_calculation(
+    rm: u8,
+    mode: u8,
+    iter: &mut Iter<'_, u8>,
+    nbytes: &mut i32,
+) -> String {
+    if rm == 0b110 && mode == 0b00 {
+        // direct address
+        let mut data: u16 = *iter.next().unwrap() as u16;
+        *nbytes += 1;
+
+        let hi = *iter.next().unwrap() as u16;
+        data |= hi << 8;
+        *nbytes += 1;
+        return data.to_string();
+    }
+    let mut ret = "[".to_string();
+    ret.push_str(match rm {
+        0 => "bx + si",
+        1 => "bx + di",
+        2 => "bp + si",
+        3 => "bp + di",
+        4 => "si",
+        5 => "di",
+        6 => "bp",
+        7 => "bx",
+        _ => panic!("unhandled: reg={}, mod={}", rm, mode),
+    });
+
+    match mode {
+        0 => { /* noop */ }
+        1 => {
+            let data = iter.next().unwrap();
+            *nbytes += 1;
+            if *data != 0 {
+                ret.push_str(" + ");
+                ret.push_str(&data.to_string());
+            }
+        }
+        2 => {
+            let mut data: u16 = *iter.next().unwrap() as u16;
+            *nbytes += 1;
+            let hi = *iter.next().unwrap() as u16;
+            data |= hi << 8;
+            *nbytes += 1;
+
+            if data != 0 {
+                ret.push_str(" + ");
+                ret.push_str(&data.to_string());
+            }
+        }
+        _ => panic!("unhandled: mod={}", mode),
+    }
+
+    ret.push(']');
+
+    ret
 }
