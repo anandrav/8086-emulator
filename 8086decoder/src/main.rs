@@ -22,7 +22,7 @@ const OP_ARITH_REG_MEM: u8 = 0b00000000;
 fn main() {
     let args: Vec<_> = env::args().collect();
     if args.len() != 2 {
-        panic!("missing an argument");
+        panic!("wrong number of arguments");
     }
     let filename = &args[1];
     let bytes = read_file_to_bytes(filename).unwrap();
