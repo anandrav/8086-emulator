@@ -18,6 +18,12 @@ const REG_MASK: u8 = 0b00111000;
 const RM_MASK: u8 = 0b00000111;
 const OP_ARITH_REG_MEM_MASK: u8 = 0b11000100;
 const OP_ARITH_REG_MEM: u8 = 0b00000000;
+const OP_ARITH_MASK: u8 = 0b00111000;
+const OP_ARITH_IMM_REG_MASK: u8 = 0b11111100;
+const OP_ARITH_IMM_REG: u8 = 0b00000100;
+const OP_ADD: u8 = 0b000;
+const OP_SUB: u8 = 0b101;
+const OP_CMP: u8 = 0b111;
 
 fn main() {
     let args: Vec<_> = env::args().collect();
@@ -54,8 +60,56 @@ fn main() {
             mode = (b2 & MODE_MASK) >> 6;
             reg = (b2 & REG_MASK) >> 3;
             rm = b2 & RM_MASK;
-        } else if (b1 & OP_MOV_IMM_REG_MASK) == OP_MOV_IMM_REG {
+
+            let opcode_str = if (b1 & OP_MOV_REG_MEM_MASK) == OP_MOV_REG_MEM {
+                "mov"
+            } else if (b1 & OP_ARITH_REG_MEM_MASK) == OP_ARITH_REG_MEM {
+                match (b1 >> 3) & 0b111 {
+                    OP_ADD => "add",
+                    OP_SUB => "sub",
+                    OP_CMP => "cmp",
+                    _ => panic!("unrecognized arithmetic operator: {:b}", (b1 >> 3) & 0b111),
+                }
+            } else {
+                panic!("Unrecognized opcode: {:b}, nbytes={}", b1, nbytes);
+            };
+
+            if mode == 3 {
+                // register to register
+                let mut register1 = register_field_encoding(reg, w);
+                let mut register2 = register_field_encoding(rm, w);
+                if d == 0 {
+                    (register1, register2) = (register2, register1);
+                }
+
+                println!("{} {}, {}", opcode_str, register1, register2);
+            } else {
+                // register to/from memory
+                let register = register_field_encoding(reg, w);
+                let addr = effective_address_calculation(rm, mode, &mut iter, &mut nbytes);
+                if d == 0 {
+                    println!("{} {}, {}", opcode_str, addr, register);
+                } else {
+                    println!("{} {}, {}", opcode_str, register, addr);
+                }
+            }
+        } else if (b1 & OP_MOV_IMM_REG_MASK) == OP_MOV_IMM_REG
+            || (b1 & OP_ARITH_IMM_REG_MASK) == OP_ARITH_IMM_REG
+        {
             // println!("-- imm to reg --");
+
+            let opcode_str = if (b1 & OP_MOV_IMM_REG_MASK) == OP_MOV_IMM_REG {
+                "mov"
+            } else if (b1 & OP_ARITH_IMM_REG_MASK) == OP_ARITH_IMM_REG {
+                match (b1 >> 3) & 0b111 {
+                    OP_ADD => "add",
+                    OP_SUB => "sub",
+                    OP_CMP => "cmp",
+                    _ => panic!("unrecognized arithmetic operator"),
+                }
+            } else {
+                panic!("Unrecognized opcode: {:b}, nbytes={}", b1, nbytes);
+            };
 
             w = (b1 & 0b00001000) >> 3;
             // println!("w={}", w);
@@ -70,33 +124,6 @@ fn main() {
                 data |= hi << 8;
                 nbytes += 1;
             }
-        } else {
-            panic!("Unrecognized opcode: {:b}, nbytes={}", b1, nbytes);
-        }
-
-        if (b1 & OP_MOV_REG_MEM_MASK) == OP_MOV_REG_MEM {
-            if mode == 3 {
-                // register to register
-                let mut register1 = register_field_encoding(reg, w);
-                let mut register2 = register_field_encoding(rm, w);
-                if d == 0 {
-                    (register1, register2) = (register2, register1);
-                }
-
-                println!("mov {}, {}", register1, register2);
-            } else {
-                // register to/from memory
-                let register = register_field_encoding(reg, w);
-                let addr = effective_address_calculation(rm, mode, &mut iter, &mut nbytes);
-                if d == 0 {
-                    println!("mov {}, {}", addr, register);
-                } else {
-                    println!("mov {}, {}", register, addr);
-                }
-            }
-        } else if (b1 & OP_MOV_IMM_REG_MASK) == OP_MOV_IMM_REG {
-            // println!("-- imm to reg --");
-
             println!("mov {}, {}", register_field_encoding(reg, w), data);
         } else {
             panic!("Unrecognized opcode: {:b}, nbytes={}", b1, nbytes);
