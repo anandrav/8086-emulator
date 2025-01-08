@@ -7,15 +7,17 @@ fn read_file_to_bytes(filename: &str) -> Result<Vec<u8>> {
     fs::read(filename)
 }
 
-const OP_REG_MEM_MASK: u8 = 0b11111100;
-const OP_REG_MEM: u8 = 0b10001000;
-const OP_IMM_REG_MASK: u8 = 0b11110000;
-const OP_IMM_REG: u8 = 0b10110000;
+const OP_MOV_REG_MEM_MASK: u8 = 0b11111100;
+const OP_MOV_REG_MEM: u8 = 0b10001000;
+const OP_MOV_IMM_REG_MASK: u8 = 0b11110000;
+const OP_MOV_IMM_REG: u8 = 0b10110000;
 const D_MASK: u8 = 0b00000010;
 const W_MASK: u8 = 0b00000001;
 const MODE_MASK: u8 = 0b11000000;
 const REG_MASK: u8 = 0b00111000;
 const RM_MASK: u8 = 0b00000111;
+const OP_ARITH_REG_MEM_MASK: u8 = 0b11000100;
+const OP_ARITH_REG_MEM: u8 = 0b00000000;
 
 fn main() {
     let args: Vec<_> = env::args().collect();
@@ -31,18 +33,48 @@ fn main() {
     while let Some(b1) = iter.next() {
         nbytes += 1;
 
-        if (b1 & OP_REG_MEM_MASK) == OP_REG_MEM {
+        let mut d: u8 = 0;
+        let mut w: u8 = 0;
+        let mut mode: u8 = 0;
+        let mut reg: u8 = 0;
+        let mut rm: u8 = 0;
+
+        let mut data: u16 = 0;
+
+        if (b1 & OP_MOV_REG_MEM_MASK) == OP_MOV_REG_MEM
+            || (b1 & OP_ARITH_REG_MEM_MASK) == OP_ARITH_REG_MEM
+        {
             // println!("-- reg to/from mem --");
             let b2 = iter.next().unwrap();
             nbytes += 1;
 
-            let d = b1 & D_MASK;
-            let w = b1 & W_MASK;
+            d = b1 & D_MASK;
+            w = b1 & W_MASK;
 
-            let mode = (b2 & MODE_MASK) >> 6;
-            let reg = (b2 & REG_MASK) >> 3;
-            let rm = b2 & RM_MASK;
+            mode = (b2 & MODE_MASK) >> 6;
+            reg = (b2 & REG_MASK) >> 3;
+            rm = b2 & RM_MASK;
+        } else if (b1 & OP_MOV_IMM_REG_MASK) == OP_MOV_IMM_REG {
+            // println!("-- imm to reg --");
 
+            w = (b1 & 0b00001000) >> 3;
+            // println!("w={}", w);
+            reg = b1 & 0b00000111;
+
+            let b2 = iter.next().unwrap();
+            nbytes += 1;
+
+            data = *b2 as u16;
+            if w != 0 {
+                let hi = *iter.next().unwrap() as u16;
+                data |= hi << 8;
+                nbytes += 1;
+            }
+        } else {
+            panic!("Unrecognized opcode: {:b}, nbytes={}", b1, nbytes);
+        }
+
+        if (b1 & OP_MOV_REG_MEM_MASK) == OP_MOV_REG_MEM {
             if mode == 3 {
                 // register to register
                 let mut register1 = register_field_encoding(reg, w);
@@ -62,22 +94,8 @@ fn main() {
                     println!("mov {}, {}", register, addr);
                 }
             }
-        } else if (b1 & OP_IMM_REG_MASK) == OP_IMM_REG {
+        } else if (b1 & OP_MOV_IMM_REG_MASK) == OP_MOV_IMM_REG {
             // println!("-- imm to reg --");
-
-            let w = (b1 & 0b00001000) >> 3;
-            // println!("w={}", w);
-            let reg = b1 & 0b00000111;
-
-            let b2 = iter.next().unwrap();
-            nbytes += 1;
-
-            let mut data = *b2 as u16;
-            if w != 0 {
-                let hi = *iter.next().unwrap() as u16;
-                data |= hi << 8;
-                nbytes += 1;
-            }
 
             println!("mov {}, {}", register_field_encoding(reg, w), data);
         } else {
